@@ -38,7 +38,7 @@ class CardGameDataset(Dataset):
         self.card2idx = {card: idx for idx, card in enumerate(all_cards, start=1)}
         self.card2idx["n"] = NUM_FOR_NONE
 
-        all_decks = sorted(data["相手デッキタイプ"].unique())
+        all_decks = sorted(data["相手デッキタイプ"].dropna().unique())
         self.deck2idx = {deck: idx for idx, deck in enumerate(all_decks, start=1)}
         self.deck2idx["n"] = NUM_FOR_NONE
 
@@ -56,6 +56,7 @@ class CardGameDataset(Dataset):
             bl = (len(row)==15)
             bl = bl and (row[-2]=="勝ち" or row[-2]=="負け")
             bl = bl and (row[0]=="先攻" or row[0]=="後攻")
+
 
             if not bl:
                 print(row.values)
@@ -170,13 +171,17 @@ def train_model(model, train_dataloader, criterion, optimizer, scheduler, epochs
         scheduler.step()
 
 
-
+import torch
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
+import numpy as np
+import random
 def evaluate_model(model, test_dataloader, num_aug=20):
     model.eval()
     correct, total = 0, 0
 
+    all_labels = []
+    all_predictions = []
 
-    
     with torch.no_grad():
         for features, labels in test_dataloader:
             features, labels = features.to(device), labels.to(device)
@@ -202,19 +207,30 @@ def evaluate_model(model, test_dataloader, num_aug=20):
                 majority_prediction = predictions.sum().item() > (len(predictions) / 2)
                 majority_predictions.append(majority_prediction)
 
-            majority_predictions = torch.tensor(majority_predictions).to(device)
-            correct += (majority_predictions == labels).sum().item()
+            all_labels.extend(labels.cpu().numpy())
+            all_predictions.extend(majority_predictions)
+
+            #majority_predictions = torch.tensor(majority_predictions).to(device)
+            #correct += (majority_predictions == labels).sum().item()
             total += labels.size(0)
 
-    accuracy = correct / total
+    conf_matrix = confusion_matrix(all_labels, all_predictions)
+    accuracy = (conf_matrix[0,0]+conf_matrix[1,1]) / (conf_matrix[0,0]+conf_matrix[1,1]+conf_matrix[0,1]+conf_matrix[1,0])
     print(f"Accuracy: {accuracy:.4f}")
-    return accuracy
 
+    precision = precision_score(all_labels, all_predictions)
+    recall = recall_score(all_labels, all_predictions)
+    #print(all_labels, all_predictions)
+    f1 = 2*precision*recall/(precision+recall)#f1_score(all_labels, all_predictions)
+
+
+    print(f"Confusion Matrix:\n{conf_matrix}")
+    print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1-score: {f1:.4f}")
+
+    return accuracy, f1
+"""
 def evaluate_model_with_f1(model, test_dataloader, num_aug=20):
-    import torch
-    from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
-    import numpy as np
-    import random
+
 
     model.eval()
     all_labels = []
@@ -259,7 +275,7 @@ def evaluate_model_with_f1(model, test_dataloader, num_aug=20):
 
     return f1
 
-
+"""
 
 from lime.lime_tabular import LimeTabularExplainer
 import numpy as np
@@ -333,7 +349,7 @@ def explain_predictions_with_lime(model, train_dataset, card2idx, deck2idx, num_
             data = keys[0]
             print(data, weight)
         print("-----")
-"""
+    """
 
     print("generating explanation...")
     for instance_index in tqdm(range(len(random_dataset))):
@@ -461,10 +477,10 @@ if __name__=='__main__':
 
         num_aug = 20
         train_model(model, train_dataloader, criterion, optimizer, scheduler, epochs=30, num_aug=num_aug)
-        accuracy = evaluate_model(model, test_dataloader, num_aug=num_aug)
+        accuracy, f1_score = evaluate_model(model, test_dataloader, num_aug=num_aug)
         accs.append(accuracy)
 
-        f1_score = evaluate_model_with_f1(model, test_dataloader, num_aug=num_aug)
+        #f1_score = evaluate_model_with_f1(model, test_dataloader, num_aug=num_aug)
         f1_scores.append(f1_score)
 
         if max_acc < accuracy:
